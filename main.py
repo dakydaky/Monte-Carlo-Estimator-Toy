@@ -9,7 +9,7 @@ pygame.init()
 # Window setup
 WIDTH, HEIGHT = 800, 800
 WINDOW = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Monte Carlo Shape Area Estimation with Confidence")
+pygame.display.set_caption("Monte Carlo Shape Area Estimation")
 
 # Colors
 WHITE = (255, 255, 255)
@@ -18,24 +18,27 @@ LIGHT_BLUE = (180, 200, 255)
 GREEN = (0, 200, 0)
 RED = (220, 0, 0)
 GRAY = (200, 200, 200)
-BLUE = (0, 120, 255)
 DARK_GRAY = (100, 100, 100)
+YELLOW = (240, 200, 0)
+BLUE = (0, 120, 255)
 
-font = pygame.font.SysFont(None, 28)
+font = pygame.font.SysFont(None, 26)
 
-# Simulation state
+# State
 drawing = True
 shape_points = []
 square_rect = None
-points = []  # (x, y, inside)
+points = []
 inside_count = 0
 total_count = 0
 last_point_time = 0
 space_held = False
+preset_selected = None  # Tracks which preset shape was chosen
 
+
+# ---------- Utility functions ----------
 
 def point_in_polygon(x, y, poly):
-    """Ray casting algorithm for inside/outside test."""
     inside = False
     n = len(poly)
     p1x, p1y = poly[0]
@@ -57,8 +60,7 @@ def draw_text(text, pos, color=BLACK):
     WINDOW.blit(label, pos)
 
 
-def draw_confidence_bar(confidence_percent, pos, width=300, height=20):
-    """Draw visual confidence bar."""
+def draw_confidence_bar(confidence_percent, pos, width=200, height=20):
     x, y = pos
     pygame.draw.rect(WINDOW, DARK_GRAY, (x, y, width, height), 2)
     fill_width = width * (confidence_percent / 100)
@@ -66,60 +68,93 @@ def draw_confidence_bar(confidence_percent, pos, width=300, height=20):
     draw_text(f"{confidence_percent:.1f}%", (x + width + 10, y - 2))
 
 
-def normalize_shape_to_bottom_center(points, margin=60, bottom_padding=50, target_height_ratio=0.35):
-    """
-    Moves and scales shape to bottom-center of screen,
-    ensuring it fits fully above the bottom margin with a bit of padding.
-    """
+def normalize_shape_to_bottom_center(points, margin=60, bottom_padding=10, target_height_ratio=0.35):
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
     width, height = max_x - min_x, max_y - min_y
 
-    # Scale shape to target height ratio of window
     target_height = HEIGHT * target_height_ratio
     scale = target_height / height
-    new_width = width * scale
-    new_height = height * scale
-
-    # Compute scaled bounding box
-    scaled_min_y = min_y * scale
     scaled_max_y = max_y * scale
-
-    # Center horizontally, and add bottom padding
     horizontal_offset = WIDTH / 2 - (min_x + width / 2) * scale
     vertical_offset = HEIGHT - margin - scaled_max_y - bottom_padding
 
-    # Apply transformation
-    transformed = [
-        (x * scale + horizontal_offset, y * scale + vertical_offset)
-        for x, y in points
-    ]
-    return transformed
+    return [(x * scale + horizontal_offset, y * scale + vertical_offset) for x, y in points]
 
-# Main loop
+
+# ---------- Preset Shapes ----------
+
+def make_circle(n=100, r=100):
+    return [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n)) for i in range(n)]
+
+def make_triangle():
+    return [(0, 0), (200, 0), (100, -173)]
+
+def make_star(points=5, r1=100, r2=40):
+    verts = []
+    for i in range(points*2):
+        r = r1 if i%2==0 else r2
+        angle = math.pi / points * i
+        verts.append((r*math.cos(angle), r*math.sin(angle)))
+    return verts
+
+def make_blob(n=8):
+    verts = []
+    for i in range(n):
+        angle = 2*math.pi*i/n
+        radius = 100 + random.uniform(-40, 40)
+        verts.append((radius*math.cos(angle), radius*math.sin(angle)))
+    return verts
+
+def make_heart(n=100):
+    verts = []
+    for i in range(n):
+        t = math.pi - 2*math.pi*i/n
+        x = 16*math.sin(t)**3
+        y = 13*math.cos(t) -5*math.cos(2*t) -2*math.cos(3*t) - math.cos(4*t)
+        verts.append((x*10, -y*10))
+    return verts
+
+
+# ---------- Buttons ----------
+
+def draw_button(text, rect, hover=False):
+    color = YELLOW if hover else GRAY
+    pygame.draw.rect(WINDOW, color, rect, border_radius=5)
+    pygame.draw.rect(WINDOW, BLACK, rect, 2, border_radius=5)
+    label = font.render(text, True, BLACK)
+    WINDOW.blit(label, (rect.x + 10, rect.y + 5))
+
+
+button_labels = ["Circle", "Triangle", "Star", "Blob", "Heart"]
+button_rects = []
+for i, label in enumerate(button_labels):
+    rect = pygame.Rect(60 + i*140, HEIGHT-60, 120, 35)
+    button_rects.append((label, rect))
+
+
+# ---------- Main Loop ----------
+
 clock = pygame.time.Clock()
 running = True
 
 while running:
     WINDOW.fill(WHITE)
+    mouse_pos = pygame.mouse.get_pos()
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
-        # Draw shape
         if drawing and pygame.mouse.get_pressed()[0]:
             shape_points.append(pygame.mouse.get_pos())
 
-        # Key events
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RETURN and len(shape_points) > 2:
                 drawing = False
-                # Move and scale shape to bottom-center
                 shape_points = normalize_shape_to_bottom_center(shape_points)
-                # Define bounding square
                 xs = [p[0] for p in shape_points]
                 ys = [p[1] for p in shape_points]
                 min_x, max_x = min(xs), max(xs)
@@ -131,7 +166,6 @@ while running:
                 space_held = True
 
             elif event.key == pygame.K_r:
-                # Reset simulation
                 drawing = True
                 shape_points.clear()
                 square_rect = None
@@ -139,70 +173,85 @@ while running:
                 inside_count = total_count = 0
                 space_held = False
 
-        if event.type == pygame.KEYUP:
-            if event.key == pygame.K_SPACE:
-                space_held = False
+        if event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
+            space_held = False
 
-    # Automatic point addition when space is held
+        # Preset shape clicks
+        if drawing and event.type == pygame.MOUSEBUTTONDOWN and event.button==1:
+            for label, rect in button_rects:
+                if rect.collidepoint(mouse_pos):
+                    preset_selected=label
+                    if label=="Circle": shape_points=make_circle()
+                    elif label=="Triangle": shape_points=make_triangle()
+                    elif label=="Star": shape_points=make_star()
+                    elif label=="Blob": shape_points=make_blob()
+                    elif label=="Heart": shape_points=make_heart()
+                    drawing=False
+                    shape_points=normalize_shape_to_bottom_center(shape_points)
+                    xs=[p[0] for p in shape_points]
+                    ys=[p[1] for p in shape_points]
+                    min_x, max_x=min(xs), max(xs)
+                    min_y, max_y=min(ys), max(ys)
+                    side=max(max_x - min_x, max_y - min_y)
+                    square_rect=pygame.Rect(min_x, min_y, side, side)
+
+    # Continuous sampling
     current_time = time.time()
-    if (
-        space_held
-        and not drawing
-        and square_rect
-        and current_time - last_point_time > 0.2
-    ):
-        rx = random.uniform(square_rect.left, square_rect.right)
-        ry = random.uniform(square_rect.top, square_rect.bottom)
-        inside = point_in_polygon(rx, ry, shape_points)
+    if space_held and not drawing and square_rect and current_time - last_point_time > 0.2:
+        rx=random.uniform(square_rect.left, square_rect.right)
+        ry=random.uniform(square_rect.top, square_rect.bottom)
+        inside=point_in_polygon(rx, ry, shape_points)
         points.append((rx, ry, inside))
         total_count += 1
-        if inside:
-            inside_count += 1
-        last_point_time = current_time
+        if inside: inside_count += 1
+        last_point_time=current_time
 
     # Draw shape
     if len(shape_points) > 1:
         pygame.draw.lines(WINDOW, BLACK, False, shape_points, 2)
 
-    # Draw bounding square
-    if not drawing and square_rect:
+    # Bounding square
+    if square_rect:
         pygame.draw.rect(WINDOW, GRAY, square_rect, 2)
         pygame.draw.polygon(WINDOW, LIGHT_BLUE, shape_points, 0)
         pygame.draw.polygon(WINDOW, BLACK, shape_points, 2)
 
     # Draw dots
-    for x, y, inside in points:
+    for x,y,inside in points:
         color = GREEN if inside else RED
         pygame.draw.circle(WINDOW, color, (int(x), int(y)), 4)
 
-    # Display info text
-    draw_text("Draw a shape with mouse. Press ENTER when done.", (10, 10))
-    draw_text("Hold SPACE to add random dots. Press R to reset.", (10, 40))
+    # ---------- UI Info Panel ----------
+    draw_text("Draw shape or choose preset below", (10,10))
+    draw_text("Hold SPACE to add dots | R to reset", (10,40))
 
-    if square_rect:
-        square_area = square_rect.width ** 2
-        draw_text(f"Bounding Square Area = {square_area:.0f} px²", (10, 70))
+    if drawing:
+        for label, rect in button_rects:
+            hover = rect.collidepoint(mouse_pos)
+            draw_button(label, rect, hover)
 
-    if total_count > 0 and square_rect:
+    if drawing == False and preset_selected == "Circle":
+        draw_text("Try: π ≈ 4 × Fractional Size", (10, 150))
+
+    if square_rect and total_count>0:
         p = inside_count / total_count
-        estimated_area = p * square_area
+        estimated_area = p * square_rect.width**2
+        fractional = estimated_area / square_rect.width**2
+        se = math.sqrt(p*(1-p)/total_count)
+        ci_low = max(0, (p - 1.96*se)*square_rect.width**2)
+        ci_high = min(square_rect.width**2, (p + 1.96*se)*square_rect.width**2)
+        k=0.01
+        confidence_score = 1 - math.exp(-k*total_count)
+        confidence_percent = confidence_score*100
 
-        # 95% confidence interval
-        se = math.sqrt(p * (1 - p) / total_count) if total_count > 0 else 0
-        ci_low = max(0, (p - 1.96 * se) * square_area)
-        ci_high = min(square_area, (p + 1.96 * se) * square_area)
+        info_y = 70
 
-        # Confidence based on number of samples
-        k = 0.01
-        confidence_score = 1 - math.exp(-k * total_count)
-        confidence_percent = confidence_score * 100
-
-        draw_text(f"Samples: {total_count} | Inside: {inside_count}", (10, 110))
-        draw_text(f"Estimated Shape Area = {estimated_area:.2f} px²", (10, 140))
-        draw_text(f"95% Confidence Interval = [{ci_low:.2f}, {ci_high:.2f}] px²", (10, 170))
-
-        draw_text("Confidence Level:", (10, 210))
-        draw_confidence_bar(confidence_percent, (180, 208))
+        draw_text(f"Samples: {total_count} | Inside: {inside_count}", (10,info_y))
+        draw_text(f"Estimated Area = {estimated_area:.2f} px²", (10, info_y+30))
+        draw_text(f"Fractional Size = {fractional:.4f}", (10, info_y+60))
+        draw_text(f"95% Confidence Interval = [{ci_low:.2f}, {ci_high:.2f}] px²", (10, info_y+90))
+        draw_text("Confidence Level:", (10, info_y+120))
+        draw_confidence_bar(confidence_percent, (180, info_y+118))
 
     pygame.display.flip()
     clock.tick(60)
