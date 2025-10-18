@@ -11,6 +11,11 @@ WIDTH, HEIGHT = 800, 800
 WINDOW = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Monte Carlo Shape Area Estimation")
 
+convergence_points = []
+
+GRAPH_WIDTH, GRAPH_HEIGHT = 200, 150
+GRAPH_MARGIN = 10
+
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -34,6 +39,12 @@ total_count = 0
 last_point_time = 0
 space_held = False
 preset_selected = None  # Tracks which preset shape was chosen
+
+# Speedup tracker
+space_held_time = 0  # tracks how long space has been held
+initial_delay = 0.2  # starting delay between points
+min_delay = 0.01     # fastest speed
+acceleration = 0.95  # multiplier per step
 
 
 # ---------- Utility functions ----------
@@ -68,7 +79,7 @@ def draw_confidence_bar(confidence_percent, pos, width=200, height=20):
     draw_text(f"{confidence_percent:.1f}%", (x + width + 10, y - 2))
 
 
-def normalize_shape_to_bottom_center(points, margin=60, bottom_padding=10, target_height_ratio=0.35):
+def normalize_shape_to_bottom_center(points, margin=60, bottom_padding=10, target_height_ratio=0.35, preserve_aspect=False):
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     min_x, max_x = min(xs), max(xs)
@@ -77,11 +88,17 @@ def normalize_shape_to_bottom_center(points, margin=60, bottom_padding=10, targe
 
     target_height = HEIGHT * target_height_ratio
     scale = target_height / height
+
+    if preserve_aspect:
+        # Make square scaling to ensure bounding square is exact
+        scale = target_height / max(width, height)
+
     scaled_max_y = max_y * scale
     horizontal_offset = WIDTH / 2 - (min_x + width / 2) * scale
     vertical_offset = HEIGHT - margin - scaled_max_y - bottom_padding
 
     return [(x * scale + horizontal_offset, y * scale + vertical_offset) for x, y in points]
+
 
 
 # ---------- Preset Shapes ----------
@@ -181,7 +198,11 @@ while running:
             for label, rect in button_rects:
                 if rect.collidepoint(mouse_pos):
                     preset_selected=label
-                    if label=="Circle": shape_points=make_circle()
+                    if label=="Circle": 
+                        shape_points = make_circle()
+                        drawing = False
+                        # Normalize but preserve aspect to keep square bounding correct
+                        shape_points = normalize_shape_to_bottom_center(shape_points, preserve_aspect=True)
                     elif label=="Triangle": shape_points=make_triangle()
                     elif label=="Star": shape_points=make_star()
                     elif label=="Blob": shape_points=make_blob()
@@ -195,16 +216,28 @@ while running:
                     side=max(max_x - min_x, max_y - min_y)
                     square_rect=pygame.Rect(min_x, min_y, side, side)
 
+        if event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
+            space_held = False
+            space_held_time = 0
+
+
     # Continuous sampling
     current_time = time.time()
-    if space_held and not drawing and square_rect and current_time - last_point_time > 0.2:
-        rx=random.uniform(square_rect.left, square_rect.right)
-        ry=random.uniform(square_rect.top, square_rect.bottom)
-        inside=point_in_polygon(rx, ry, shape_points)
-        points.append((rx, ry, inside))
-        total_count += 1
-        if inside: inside_count += 1
-        last_point_time=current_time
+    if space_held and not drawing and square_rect:
+        if last_point_time == 0:
+            last_point_time = current_time
+        # compute dynamic delay
+        elapsed = current_time - last_point_time
+        dynamic_delay = max(min_delay, initial_delay * (acceleration ** space_held_time))
+        if elapsed > dynamic_delay:
+            rx = random.uniform(square_rect.left, square_rect.right)
+            ry = random.uniform(square_rect.top, square_rect.bottom)
+            inside = point_in_polygon(rx, ry, shape_points)
+            points.append((rx, ry, inside))
+            total_count += 1
+            if inside: inside_count += 1
+            last_point_time = current_time
+            space_held_time += 1
 
     # Draw shape
     if len(shape_points) > 1:
@@ -241,6 +274,8 @@ while running:
         confidence_score = 1 - math.exp(-k*total_count)
         confidence_percent = confidence_score*100
 
+        convergence_points.append(estimated_area)
+
         info_y = 70
 
         draw_text(f"Samples: {total_count} | Inside: {inside_count}", (10,info_y))
@@ -250,10 +285,27 @@ while running:
         draw_text("Confidence Level:", (10, info_y+120))
         draw_confidence_bar(confidence_percent, (180, info_y+118))
         if preset_selected == "Circle":
-            pi_estimate = 4 * (inside_count / total_count)
-            draw_text(f"π estimate ≈ {pi_estimate:.5f}", (10, 250))
-            draw_text("Hint: π ≈ 4 × Fractional Size", (10, 280))
-            
+            pi_estimate = 4 * (inside_count / total_count)  # fraction matches π/4 exactly
+            draw_text(f"π estimate = {pi_estimate:.5f}", (10, 250))
+            draw_text("Hint: π = 4 × Fractional Size", (10, 280))
+
+        # ---------- Draw Convergence Graph ----------
+        graph_x = WIDTH - GRAPH_WIDTH - GRAPH_MARGIN
+        graph_y = GRAPH_MARGIN
+        pygame.draw.rect(WINDOW, DARK_GRAY, (graph_x, graph_y, GRAPH_WIDTH, GRAPH_HEIGHT), 2)
+
+        if convergence_points:
+            max_area = square_rect.width**2
+            n_points = len(convergence_points)
+            step = max(1, n_points // GRAPH_WIDTH)
+            last_x, last_y = graph_x, graph_y + GRAPH_HEIGHT
+            for i in range(0, n_points, step):
+                x = graph_x + (i / n_points) * GRAPH_WIDTH
+                y = graph_y + GRAPH_HEIGHT - (convergence_points[i] / max_area) * GRAPH_HEIGHT
+                pygame.draw.line(WINDOW, BLUE, (last_x, last_y), (x, y), 2)
+                last_x, last_y = x, y
+            draw_text("Convergence", (graph_x, graph_y + GRAPH_HEIGHT + 5), BLACK)
+
     pygame.display.flip()
     clock.tick(60)
 
