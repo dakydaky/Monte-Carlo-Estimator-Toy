@@ -230,9 +230,6 @@ while running:
             hover = rect.collidepoint(mouse_pos)
             draw_button(label, rect, hover)
 
-    if drawing == False and preset_selected == "Circle":
-        draw_text("Try: π ≈ 4 × Fractional Size", (10, 150))
-
     if square_rect and total_count>0:
         p = inside_count / total_count
         estimated_area = p * square_rect.width**2
@@ -252,7 +249,11 @@ while running:
         draw_text(f"95% Confidence Interval = [{ci_low:.2f}, {ci_high:.2f}] px²", (10, info_y+90))
         draw_text("Confidence Level:", (10, info_y+120))
         draw_confidence_bar(confidence_percent, (180, info_y+118))
-
+        if preset_selected == "Circle":
+            pi_estimate = 4 * (inside_count / total_count)
+            draw_text(f"π estimate ≈ {pi_estimate:.5f}", (10, 250))
+            draw_text("Hint: π ≈ 4 × Fractional Size", (10, 280))
+            
     pygame.display.flip()
     clock.tick(60)
 
